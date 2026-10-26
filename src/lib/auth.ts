@@ -5,7 +5,18 @@ import { eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { deriveKey, verifyPassword } from "./crypto";
 
-const COOKIE = "xb_admin";
+/**
+ * Host-only session cookie. In production the `__Host-` prefix makes browsers reject any
+ * version of it set by another subdomain (it must be Secure, Path=/, and carry no Domain).
+ * Plain name in development, where the site runs over http.
+ */
+const COOKIE = process.env.NODE_ENV === "production" ? "__Host-xb_admin" : "xb_admin";
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "strict",
+  path: "/",
+} as const;
 const SESSION_DAYS = 7;
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -74,16 +85,11 @@ export async function login(password: string): Promise<LoginResult> {
     .setExpirationTime(`${SESSION_DAYS}d`)
     .sign(deriveKey("session"));
 
-  (await cookies()).set(COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: "/",
-    maxAge: SESSION_DAYS * 86_400,
-  });
+  (await cookies()).set(COOKIE, token, { ...COOKIE_OPTIONS, maxAge: SESSION_DAYS * 86_400 });
   return { ok: true };
 }
 
 export async function logout() {
-  (await cookies()).delete(COOKIE);
+  // Same attributes as when setting it, or browsers ignore the deletion of a __Host- cookie.
+  (await cookies()).set(COOKIE, "", { ...COOKIE_OPTIONS, maxAge: 0 });
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { ClientTransaction, fetchXDocument } from "x-client-transaction-id";
 import type { XCredentials } from "./cookies";
 import { parseBookmarksPage, type ParsedPage } from "./parse";
 
@@ -93,6 +94,28 @@ async function request(url: string | URL, init: RequestInit) {
   }
 }
 
+/**
+ * x.com signs each API request with an `x-client-transaction-id` header derived from its home
+ * page and scripts. The generator is built once and reused for an hour; if building it fails,
+ * requests go out without the header (which X still accepts for most calls).
+ */
+let transaction: { instance: Promise<ClientTransaction>; expires: number } | null = null;
+
+async function transactionId(method: string, path: string): Promise<string | null> {
+  try {
+    if (!transaction || transaction.expires < Date.now()) {
+      transaction = {
+        instance: fetchXDocument().then((doc) => ClientTransaction.create(doc)),
+        expires: Date.now() + 60 * 60_000,
+      };
+    }
+    return await (await transaction.instance).generateTransactionId(method, path);
+  } catch {
+    transaction = null;
+    return null;
+  }
+}
+
 function cookieHeader({ authToken, ct0 }: XCredentials) {
   return `auth_token=${authToken}; ct0=${ct0}`;
 }
@@ -165,7 +188,7 @@ export async function fetchBookmarksPage(
   url.searchParams.set("variables", JSON.stringify(variables));
   url.searchParams.set("features", JSON.stringify(query.features));
 
-  const res = await request(url, { headers: apiHeaders(creds), cache: "no-store" });
+  const res = await request(url, { headers: await apiHeaders(creds, "GET", url), cache: "no-store" });
   await throwForStatus(res);
 
   const json = await res.json();
@@ -177,8 +200,10 @@ export async function fetchBookmarksPage(
   return parseBookmarksPage(json);
 }
 
-function apiHeaders(creds: XCredentials) {
+async function apiHeaders(creds: XCredentials, method: string, url: string | URL) {
+  const txid = await transactionId(method, new URL(url).pathname);
   return {
+    ...(txid ? { "x-client-transaction-id": txid } : {}),
     authorization: `Bearer ${WEB_BEARER}`,
     cookie: cookieHeader(creds),
     "x-csrf-token": creds.ct0,
@@ -209,9 +234,10 @@ async function throwForStatus(res: Response) {
 /** Removes a tweet from the account's bookmarks on X (the same call x.com makes). */
 export async function deleteBookmark(creds: XCredentials, tweetId: string) {
   const send = async (queryId: string) => {
-    const res = await request(`https://x.com/i/api/graphql/${queryId}/DeleteBookmark`, {
+    const url = `https://x.com/i/api/graphql/${queryId}/DeleteBookmark`;
+    const res = await request(url, {
       method: "POST",
-      headers: apiHeaders(creds),
+      headers: await apiHeaders(creds, "POST", url),
       body: JSON.stringify({ variables: { tweet_id: tweetId }, queryId }),
       cache: "no-store",
     });
