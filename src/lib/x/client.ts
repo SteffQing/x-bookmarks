@@ -17,35 +17,52 @@ const USER_AGENT =
 /** Used when discovery fails. Can be overridden from the admin page. */
 export const FALLBACK_QUERY_ID = "QUmGNbgmiTSb_sMZTr_c2Q";
 
-/** Feature flags the Bookmarks query expects. Discovered flags not listed here are sent as false. */
+/**
+ * Feature flags exactly as x.com's own Bookmarks request sent them (October 2026).
+ * When discovery finds a different list, flags not listed here are sent as false.
+ */
 const KNOWN_FEATURES: Record<string, boolean> = {
-  graphql_timeline_v2_bookmark_timeline: true,
-  rweb_tipjar_consumption_enabled: true,
-  responsive_web_graphql_exclude_directive_enabled: true,
+  rweb_video_screen_enabled: false,
+  rweb_cashtags_enabled: true,
+  profile_label_improvements_pcf_label_in_post_enabled: true,
+  responsive_web_profile_redirect_enabled: true,
+  rweb_tipjar_consumption_enabled: false,
   verified_phone_label_enabled: false,
   creator_subscriptions_tweet_preview_api_enabled: true,
   responsive_web_graphql_timeline_navigation_enabled: true,
-  responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+  premium_content_api_read_enabled: false,
   communities_web_enable_tweet_community_results_fetch: true,
   c9s_tweet_anatomy_moderator_badge_enabled: true,
+  responsive_web_grok_analyze_button_fetch_trends_enabled: false,
+  responsive_web_grok_analyze_post_followups_enabled: true,
+  rweb_cashtags_composer_attachment_enabled: true,
+  responsive_web_jetfuel_frame: true,
+  rweb_sports_post_context_enabled: true,
+  responsive_web_grok_share_attachment_enabled: true,
+  responsive_web_grok_annotations_enabled: true,
   articles_preview_enabled: true,
   responsive_web_edit_tweet_api_enabled: true,
+  rweb_conversational_replies_downvote_enabled: false,
   graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
   view_counts_everywhere_api_enabled: true,
   longform_notetweets_consumption_enabled: true,
   responsive_web_twitter_article_tweet_consumption_enabled: true,
-  tweet_awards_web_tipping_enabled: false,
-  creator_subscriptions_quote_tweet_preview_enabled: false,
+  content_disclosure_indicator_enabled: true,
+  content_disclosure_ai_generated_indicator_enabled: true,
+  responsive_web_grok_show_grok_translated_post: true,
+  responsive_web_grok_analysis_button_from_backend: true,
+  post_ctas_fetch_enabled: false,
   freedom_of_speech_not_reach_fetch_enabled: true,
   standardized_nudges_misinfo: true,
   tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
-  rweb_video_timestamps_enabled: true,
   longform_notetweets_rich_text_read_enabled: true,
-  longform_notetweets_inline_media_enabled: true,
+  longform_notetweets_inline_media_enabled: false,
+  responsive_web_nested_quote_preview_enabled: true,
+  responsive_web_grok_image_annotation_enabled: true,
+  responsive_web_grok_imagine_annotation_enabled: true,
+  responsive_web_made_on_x_label_enabled: false,
+  responsive_web_grok_community_note_auto_translation_is_enabled: true,
   responsive_web_enhance_cards_enabled: false,
-  profile_label_improvements_pcf_label_in_post_enabled: true,
-  premium_content_api_read_enabled: false,
-  payments_enabled: false,
 };
 
 export class XAuthError extends Error {
@@ -86,26 +103,51 @@ export function defaultQuery(queryId?: string | null): QueryInfo {
   return { queryId: queryId || FALLBACK_QUERY_ID, features: KNOWN_FEATURES };
 }
 
+const BUNDLE_BASE = "https://abs.twimg.com/responsive-web/client-web";
+
+function findOperation(js: string): QueryInfo | null {
+  const match = /queryId:"([\w-]+)",operationName:"Bookmarks"([\s\S]{0,4000}?)\}\}/.exec(js);
+  if (!match) return null;
+  const switches = /featureSwitches:\[([^\]]*)\]/.exec(match[2])?.[1];
+  const names = switches ? [...switches.matchAll(/"(\w+)"/g)].map((m) => m[1]) : null;
+  return { queryId: match[1], features: featuresFor(names) };
+}
+
 /**
  * Finds the current Bookmarks query id (and its feature flags) by reading x.com's web bundle,
- * the same way the website itself learns them.
+ * the same way the website itself learns them. The operation lives either in a script the
+ * page loads up front or in the lazily loaded bookmarks chunk listed in main.js's chunk map.
  */
 export async function discoverQuery(creds: XCredentials): Promise<QueryInfo | null> {
-  const headers = { "user-agent": USER_AGENT, cookie: cookieHeader(creds) };
-  const html = await request("https://x.com/home", { headers }).then((r) => r.text());
-  const scripts = [
-    ...html.matchAll(/https:\/\/abs\.twimg\.com\/responsive-web\/client-web[\w-]*\/[\w.~-]+\.js/g),
-  ].map((m) => m[0]);
-  // main.*.js holds the operation table today; check it first, then any other preloaded bundle.
-  scripts.sort((a, b) => Number(/\/main\./.test(b)) - Number(/\/main\./.test(a)));
+  const get = (url: string, headers: Record<string, string> = { "user-agent": USER_AGENT }) =>
+    request(url, { headers }).then((r) => (r.ok ? r.text() : ""));
 
-  for (const src of [...new Set(scripts)].slice(0, 12)) {
-    const js = await request(src, { headers: { "user-agent": USER_AGENT } }).then((r) => r.text());
-    const match = /queryId:"([\w-]+)",operationName:"Bookmarks"([\s\S]{0,4000}?)\}\}/.exec(js);
-    if (!match) continue;
-    const switches = /featureSwitches:\[([^\]]*)\]/.exec(match[2])?.[1];
-    const names = switches ? [...switches.matchAll(/"([\w]+)"/g)].map((m) => m[1]) : null;
-    return { queryId: match[1], features: featuresFor(names) };
+  const html = await get("https://x.com/home", { "user-agent": USER_AGENT, cookie: cookieHeader(creds) });
+  const scripts = [
+    ...new Set([...html.matchAll(/https:\/\/abs\.twimg\.com\/responsive-web\/client-web[\w-]*\/[\w.~-]+\.js/g)].map((m) => m[0])),
+  ];
+  const main = scripts.find((s) => /\/main\.[\w]+\.js$/.test(s));
+
+  // main.js first: it holds the operation table and, failing that, the chunk map.
+  let mainJs = "";
+  if (main) {
+    mainJs = await get(main);
+    const found = findOperation(mainJs);
+    if (found) return found;
+  }
+
+  // Chunk map entries look like "bundle.Bookmarks":"1a2b3c4". The file name gets an "a" suffix.
+  const chunks = [...mainJs.matchAll(/"((?:[\w.~-]*~)?bundle\.Bookmarks[\w.~-]*)":"([0-9a-f]+)"/g)];
+  for (const [, name, hash] of chunks) {
+    for (const url of [`${BUNDLE_BASE}/${name}.${hash}a.js`, `${BUNDLE_BASE}/${name}.${hash}.js`]) {
+      const found = findOperation(await get(url));
+      if (found) return found;
+    }
+  }
+
+  for (const src of scripts.filter((s) => s !== main).slice(0, 12)) {
+    const found = findOperation(await get(src));
+    if (found) return found;
   }
   return null;
 }
@@ -115,7 +157,7 @@ export async function fetchBookmarksPage(
   query: QueryInfo,
   cursor: string | null,
 ): Promise<ParsedPage> {
-  const variables = { count: 100, includePromotedContent: false, ...(cursor ? { cursor } : {}) };
+  const variables = { count: 50, includePromotedContent: false, ...(cursor ? { cursor } : {}) };
   const url = new URL(`https://x.com/i/api/graphql/${query.queryId}/Bookmarks`);
   url.searchParams.set("variables", JSON.stringify(variables));
   url.searchParams.set("features", JSON.stringify(query.features));

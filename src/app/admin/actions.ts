@@ -67,8 +67,10 @@ export async function syncAction(): Promise<ActionState> {
 export async function saveSettingsAction(_: ActionState, form: FormData): Promise<ActionState> {
   await requireAdmin();
   const text = (key: string, max: number) => String(form.get(key) ?? "").trim().slice(0, max) || null;
-  const queryId = text("queryId", 64);
-  if (queryId && !/^[\w-]+$/.test(queryId)) return { ok: false, message: "That query ID doesn’t look right." };
+  // Accept the bare ID or a whole copied request URL (…/graphql/<ID>/Bookmarks?…).
+  const rawQuery = text("queryId", 4000);
+  const queryId = rawQuery ? (/graphql\/([\w-]+)\/Bookmarks/.exec(rawQuery)?.[1] ?? rawQuery) : null;
+  if (queryId && !/^[\w-]{8,64}$/.test(queryId)) return { ok: false, message: "That query ID doesn’t look right." };
   await updateState({
     siteTitle: text("siteTitle", 60),
     ownerHandle: text("ownerHandle", 30)?.replace(/^@/, "") ?? null,

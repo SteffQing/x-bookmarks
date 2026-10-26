@@ -237,11 +237,11 @@ export function Dashboard(props: {
             <input
               name="queryId"
               defaultValue={props.queryId}
-              placeholder="Discovered automatically"
+              placeholder="ID or a copied …/graphql/ID/Bookmarks URL"
               className={`${input} mt-2 font-mono text-[13px]`}
             />
             <span className="mt-2 block text-[12px] text-faint">
-              Only needed if X changes its API and automatic discovery fails.
+              Only needed if automatic discovery fails. Find it in DevTools → Network on x.com/i/bookmarks.
             </span>
           </label>
         </details>

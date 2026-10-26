@@ -120,7 +120,11 @@ export async function runSync(): Promise<SyncResult> {
       if (!(err instanceof XQueryError)) throw err;
       // The query id probably rotated. Re-read it from x.com and retry once.
       const discovered = await discoverQuery(creds).catch(() => null);
-      if (!discovered) throw err;
+      if (!discovered) {
+        throw new XQueryError(
+          `${err.message} Couldn’t find the current query ID automatically. Copy it from a Bookmarks request in DevTools (x.com/i/api/graphql/<ID>/Bookmarks) and paste it under Gallery → Advanced.`,
+        );
+      }
       query = discovered;
       items = await crawl(creds, query);
     }

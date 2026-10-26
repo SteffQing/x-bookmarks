@@ -49,3 +49,37 @@ describe("parseBookmarksPage", () => {
     expect(parseBookmarksPage({ errors: [{ message: "x" }] }).valid).toBe(false);
   });
 });
+
+describe("parseBookmarksPage on the October 2026 response shape", async () => {
+  const real = (await import("./__fixtures__/bookmarks-2026.json")).default;
+  const page = parseBookmarksPage(real);
+  const [reply, linkNote, photoNote] = page.bookmarks;
+
+  it("reads entries and the bottom cursor", () => {
+    expect(page.bookmarks).toHaveLength(3);
+    expect(page.nextCursor).toBe("HBb++eWWibXUlDQAAA==");
+  });
+
+  it("hides the reply-to mention but keeps the ones X displays", () => {
+    expect(reply.text).toBe("@grok Describe Revolut’s GTM in detail.");
+    expect(reply.authorVerified).toBe(true);
+    expect(reply.metrics.views).toBe(1410);
+  });
+
+  it("uses note text, expands links and builds the card from vanity_url", () => {
+    expect(linkNote.kind).toBe("link");
+    expect(linkNote.text).toContain("Apply here: https://www.rug.nl/education/scholarships/eric-bleumink-fellowship?lang=en");
+    expect(linkNote.text).toContain("& get in");
+    expect(linkNote.card).toMatchObject({
+      title: "Eric Bleumink Fellowship",
+      domain: "rug.nl",
+      url: "https://www.rug.nl/education/scholarships/eric-bleumink-fellowship?lang=en",
+    });
+  });
+
+  it("keeps media from legacy entities on note tweets", () => {
+    expect(photoNote.kind).toBe("photo");
+    expect(photoNote.media[0]).toMatchObject({ width: 1600, height: 900 });
+    expect(photoNote.text).toBe("Netflix can wait.\n\n1. Life After Code\n- http://gitlab-transcend.devpost.com");
+  });
+});
