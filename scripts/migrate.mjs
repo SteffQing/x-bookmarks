@@ -2,7 +2,11 @@
 // Applies pending migrations from ./drizzle. Runs automatically before `next build`.
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import nextEnv from "@next/env";
 import pg from "pg";
+
+// Load .env.local / .env the same way Next.js does (Vercel provides real env vars instead).
+nextEnv.loadEnvConfig(process.cwd());
 
 const url = process.env.DATABASE_URL;
 if (!url) {
