@@ -1,15 +1,17 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Bookmark as BookmarkIcon, Loader2, Search, X } from "lucide-react";
+import { Bookmark as BookmarkIcon, BookmarkX, CalendarDays, EyeOff, Loader2, Search, X } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { BookmarkCard } from "./card";
 import { BookmarkDetail } from "./detail";
 import { Masonry } from "./masonry";
 import { ThemeToggle } from "./theme-toggle";
 import { formatNumber } from "@/lib/format";
+import { useHidden } from "@/lib/use-hidden";
 import { useTimeAgo } from "@/lib/use-time-ago";
+import { removeBookmarkAction } from "@/app/admin/actions";
 import type { Bookmark, BookmarkPage, KindFilter } from "@/lib/types";
 import type { SiteInfo } from "@/lib/data";
 
@@ -21,16 +23,91 @@ const KINDS: { value: KindFilter; label: string }[] = [
   { value: "text", label: "Words" },
 ];
 
+type DatePreset = "any" | "week" | "month" | "year" | "custom";
+
+const DATES: { value: DatePreset; label: string; days?: number }[] = [
+  { value: "any", label: "Any time" },
+  { value: "week", label: "Past week", days: 7 },
+  { value: "month", label: "Past month", days: 31 },
+  { value: "year", label: "Past year", days: 365 },
+  { value: "custom", label: "Custom" },
+];
+
+interface Filters {
+  q: string;
+  kind: KindFilter;
+  date: DatePreset;
+  /** YYYY-MM-DD, used when date is "custom". */
+  from: string;
+  to: string;
+}
+
+const NO_FILTERS: Filters = { q: "", kind: "all", date: "any", from: "", to: "" };
+
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/** The from/to dates (YYYY-MM-DD) a filter selects, posted-date based. */
+function dateRange(f: Filters): { from?: string; to?: string } {
+  const preset = DATES.find((d) => d.value === f.date);
+  if (preset?.days) return { from: isoDay(new Date(Date.now() - preset.days * 86_400_000)) };
+  if (f.date === "custom") return { from: f.from || undefined, to: f.to || undefined };
+  return {};
+}
+
+function isFiltered(f: Filters) {
+  const range = dateRange(f);
+  return f.q.trim() !== "" || f.kind !== "all" || Boolean(range.from || range.to);
+}
+
 const iconButton =
   "grid size-9 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-ink";
 
-async function fetchPage(offset: number, q: string, kind: KindFilter): Promise<BookmarkPage> {
+const chip = (active: boolean) =>
+  `shrink-0 rounded-full px-3.5 py-2 text-[13px] font-medium transition-colors ${
+    active ? "bg-ink text-bg" : "text-muted ring-1 ring-line ring-inset hover:bg-surface-2 hover:text-ink"
+  }`;
+
+async function fetchPage(offset: number, f: Filters): Promise<BookmarkPage> {
   const params = new URLSearchParams({ offset: String(offset) });
-  if (q) params.set("q", q);
-  if (kind !== "all") params.set("kind", kind);
+  if (f.q.trim()) params.set("q", f.q.trim());
+  if (f.kind !== "all") params.set("kind", f.kind);
+  const { from, to } = dateRange(f);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
   const res = await fetch(`/api/bookmarks?${params}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+/** Owner-only: unbookmark on X, with a second click to confirm. */
+function RemoveButton({ b, onRemoved }: { b: Bookmark; onRemoved: (b: Bookmark) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  return (
+    <>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          if (!confirming) return setConfirming(true);
+          start(async () => {
+            const result = await removeBookmarkAction(b.id).catch((e: Error) => ({ ok: false, message: e.message }));
+            if (result?.ok) onRemoved(b);
+            else setError(result?.message ?? "Couldn’t remove it.");
+          });
+        }}
+        onMouseLeave={() => !pending && setConfirming(false)}
+        className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-medium transition-colors disabled:opacity-60 ${
+          confirming ? "bg-accent text-white" : "border border-line hover:bg-surface-2"
+        }`}
+      >
+        {pending ? <Loader2 className="size-3.5 animate-spin" /> : <BookmarkX className="size-3.5" />}
+        {pending ? "Removing…" : confirming ? "Click again to unbookmark" : "Remove bookmark"}
+      </button>
+      {error && <p className="w-full text-[13px] text-accent">{error}</p>}
+    </>
+  );
 }
 
 function SyncedAgo({ iso }: { iso: string }) {
@@ -42,26 +119,27 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
   const [items, setItems] = useState(initial.items);
   const [next, setNext] = useState(initial.next);
   const [total, setTotal] = useState(initial.total);
-  const [q, setQ] = useState("");
-  const [kind, setKind] = useState<KindFilter>("all");
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const { q, kind } = filters;
+  const [admin, setAdmin] = useState(false);
+  const { hidden, hide, unhideAll } = useHidden();
   const [loading, setLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [selected, setSelected] = useState<Bookmark | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
   const request = useRef(0);
-  const filtered = q.trim() !== "" || kind !== "all";
+  const filtered = isFiltered(filters);
 
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   /** Applies a new search/filter: resets to the cached first page, or queries the API (debounced while typing). */
-  const applyFilter = (nextQ: string, nextKind: KindFilter) => {
-    setQ(nextQ);
-    setKind(nextKind);
+  const applyFilter = (patch: Partial<Filters>) => {
+    const nextFilters = { ...filters, ...patch };
+    setFilters(nextFilters);
     clearTimeout(debounce.current);
     const id = ++request.current;
-    const term = nextQ.trim();
-    if (!term && nextKind === "all") {
+    if (!isFiltered(nextFilters)) {
       setItems(initial.items);
       setNext(initial.next);
       setTotal(initial.total);
@@ -71,7 +149,7 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
     setLoading(true);
     debounce.current = setTimeout(async () => {
       try {
-        const page = await fetchPage(0, term, nextKind);
+        const page = await fetchPage(0, nextFilters);
         if (id !== request.current) return;
         setItems(page.items);
         setNext(page.next);
@@ -81,7 +159,7 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
       } finally {
         if (id === request.current) setLoading(false);
       }
-    }, nextKind === kind && term ? 250 : 0);
+    }, "q" in patch && nextFilters.q.trim() ? 250 : 0);
   };
 
   const loadMore = useCallback(async () => {
@@ -89,7 +167,7 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
     const id = request.current;
     setLoading(true);
     try {
-      const page = await fetchPage(next, q.trim(), kind);
+      const page = await fetchPage(next, filters);
       if (id !== request.current) return;
       setItems((prev) => {
         const seen = new Set(prev.map((b) => b.id));
@@ -101,7 +179,24 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
     } finally {
       if (id === request.current) setLoading(false);
     }
-  }, [next, loading, q, kind]);
+  }, [next, loading, filters]);
+
+  useEffect(() => {
+    fetch("/api/me")
+      .then((r) => r.json())
+      .then((me: { admin?: boolean }) => setAdmin(Boolean(me.admin)))
+      .catch(() => {});
+  }, []);
+
+  const visible = hidden.size ? items.filter((b) => !hidden.has(b.id)) : items;
+
+  const hideBookmark = useCallback((b: Bookmark) => hide(b.id), [hide]);
+
+  const removed = (b: Bookmark) => {
+    setItems((prev) => prev.filter((x) => x.id !== b.id));
+    setTotal((t) => Math.max(0, t - 1));
+    history.back();
+  };
 
   useEffect(() => {
     const el = sentinel.current;
@@ -157,9 +252,15 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
     document.documentElement.style.overflow = selected ? "hidden" : "";
   }, [selected]);
 
-  const clear = () => applyFilter("", "all");
+  const clear = () => applyFilter(NO_FILTERS);
 
   const kindLabel = KINDS.find((k) => k.value === kind)?.label.toLowerCase();
+  const dateLabel =
+    filters.date === "custom"
+      ? [filters.from && `from ${filters.from}`, filters.to && `to ${filters.to}`].filter(Boolean).join(" ")
+      : filters.date !== "any"
+        ? DATES.find((d) => d.value === filters.date)?.label.toLowerCase()
+        : "";
 
   return (
     <>
@@ -191,7 +292,7 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
                 onClick={clear}
                 className="mr-1 hidden items-center gap-1.5 rounded-full bg-ink px-3 py-1.5 text-[12px] font-medium text-bg sm:flex"
               >
-                {q.trim() ? `“${q.trim()}”` : kindLabel}
+                {q.trim() ? `“${q.trim()}”` : kind !== "all" ? kindLabel : dateLabel}
                 <X className="size-3" />
               </button>
             )}
@@ -218,38 +319,63 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
               transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
               className="mx-auto max-w-[1720px] px-4 pb-4 sm:px-8"
             >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
                 <label className="flex flex-1 items-center gap-3 rounded-2xl bg-surface px-4 py-3 shadow-card ring-1 ring-line focus-within:ring-accent/50">
-                  <Search className="size-4 text-faint" />
+                  <Search className="size-4 shrink-0 text-faint" />
                   <input
                     autoFocus
                     value={q}
-                    onChange={(e) => applyFilter(e.target.value, kind)}
+                    onChange={(e) => applyFilter({ q: e.target.value })}
                     onKeyDown={(e) => e.key === "Enter" && setSearchOpen(false)}
                     placeholder="Search words, people, links…"
-                    className="w-full bg-transparent text-[15px] outline-none placeholder:text-faint focus-visible:outline-none"
+                    className="w-full appearance-none border-0 bg-transparent text-[15px] shadow-none ring-0 outline-none placeholder:text-faint focus:ring-0 focus:outline-none focus-visible:outline-none"
                   />
                   {loading && <Loader2 className="size-4 animate-spin text-faint" />}
                   {q && (
-                    <button type="button" onClick={() => applyFilter("", kind)} aria-label="Clear search" className="text-faint hover:text-ink">
+                    <button type="button" onClick={() => applyFilter({ q: "" })} aria-label="Clear search" className="text-faint hover:text-ink">
                       <X className="size-4" />
                     </button>
                   )}
                 </label>
-                <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 py-1 lg:mx-0 lg:px-1">
                   {KINDS.map((k) => (
-                    <button
-                      key={k.value}
-                      type="button"
-                      onClick={() => applyFilter(q, k.value)}
-                      className={`shrink-0 rounded-full px-3.5 py-2 text-[13px] font-medium transition-colors ${
-                        kind === k.value ? "bg-ink text-bg" : "text-muted ring-1 ring-line hover:bg-surface-2 hover:text-ink"
-                      }`}
-                    >
+                    <button key={k.value} type="button" onClick={() => applyFilter({ kind: k.value })} className={chip(kind === k.value)}>
                       {k.label}
                     </button>
                   ))}
                 </div>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+                <div className="no-scrollbar -mx-4 flex items-center gap-1.5 overflow-x-auto px-4 py-1 sm:mx-0 sm:px-1">
+                  <CalendarDays className="mr-1 size-4 shrink-0 text-faint" aria-hidden />
+                  {DATES.map((d) => (
+                    <button key={d.value} type="button" onClick={() => applyFilter({ date: d.value })} className={chip(filters.date === d.value)}>
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                {filters.date === "custom" && (
+                  <div className="flex items-center gap-2 text-[13px] text-muted">
+                    <input
+                      type="date"
+                      aria-label="From date"
+                      value={filters.from}
+                      max={filters.to || undefined}
+                      onChange={(e) => applyFilter({ from: e.target.value })}
+                      className="rounded-full bg-surface px-3 py-1.5 text-ink ring-1 ring-line ring-inset outline-none focus-visible:ring-accent/60 dark:[color-scheme:dark]"
+                    />
+                    <span>to</span>
+                    <input
+                      type="date"
+                      aria-label="To date"
+                      value={filters.to}
+                      min={filters.from || undefined}
+                      onChange={(e) => applyFilter({ to: e.target.value })}
+                      className="rounded-full bg-surface px-3 py-1.5 text-ink ring-1 ring-line ring-inset outline-none focus-visible:ring-accent/60 dark:[color-scheme:dark]"
+                    />
+                  </div>
+                )}
+                <span className="text-[12px] text-faint">by date posted</span>
               </div>
             </motion.div>
           )}
@@ -290,6 +416,7 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
             <span>
               {loading && !items.length ? "Searching…" : `${formatNumber(total)} ${total === 1 ? "result" : "results"}`}
               {kind !== "all" && <> in {kindLabel}</>}
+              {dateLabel && <> · {dateLabel}</>}
               {q.trim() && <> for “{q.trim()}”</>}
             </span>
             <button type="button" onClick={clear} className="text-ink underline underline-offset-4 hover:text-accent">
@@ -298,8 +425,8 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
           </div>
         )}
 
-        {items.length > 0 ? (
-          <Masonry items={items} render={(b, i) => <BookmarkCard b={b} index={i} onOpen={open} />} />
+        {visible.length > 0 ? (
+          <Masonry items={visible} render={(b, i) => <BookmarkCard b={b} index={i} onOpen={open} onHide={hideBookmark} />} />
         ) : (
           !loading && (
             <div className="grid min-h-[40vh] place-items-center text-center">
@@ -322,7 +449,14 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
       </main>
 
       <footer className="mx-auto flex max-w-[1720px] items-center justify-between px-4 pb-10 font-mono text-[11px] tracking-wider text-faint uppercase sm:px-8">
-        <span>Synced from X</span>
+        <span className="flex items-center gap-3">
+          Synced from X
+          {hidden.size > 0 && (
+            <button type="button" onClick={unhideAll} className="normal-case transition-colors hover:text-ink">
+              · {hidden.size} hidden — show again
+            </button>
+          )}
+        </span>
         <Link href="/admin" className="transition-colors hover:text-ink">
           Owner
         </Link>
@@ -361,7 +495,25 @@ export function Gallery({ site, initial }: { site: SiteInfo; initial: BookmarkPa
                 >
                   <X className="size-4" />
                 </button>
-                <BookmarkDetail b={selected} />
+                <BookmarkDetail
+                  b={selected}
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          hide(selected.id);
+                          history.back();
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-line px-4 py-2 text-[13px] font-medium transition-colors hover:bg-surface-2"
+                        title="Only hides it in this browser"
+                      >
+                        <EyeOff className="size-3.5" /> Hide
+                      </button>
+                      {admin && <RemoveButton b={selected} onRemoved={removed} />}
+                    </>
+                  }
+                />
               </motion.div>
             </div>
           </motion.div>

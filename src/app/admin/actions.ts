@@ -4,8 +4,9 @@ import { refresh, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { login, logout, requireAdmin } from "@/lib/auth";
 import { BOOKMARKS_TAG } from "@/lib/data";
-import { saveCredentials, updateState } from "@/lib/state";
-import { runSync } from "@/lib/sync";
+import { getState, readCredentials, saveCredentials, updateState } from "@/lib/state";
+import { removeStoredBookmark, runSync } from "@/lib/sync";
+import { XAuthError, deleteBookmark } from "@/lib/x/client";
 import { parseCredentials, type XCredentials } from "@/lib/x/cookies";
 
 export type ActionState = { ok: boolean; message: string } | null;
@@ -78,4 +79,21 @@ export async function saveSettingsAction(_: ActionState, form: FormData): Promis
   });
   updateTag(BOOKMARKS_TAG);
   return { ok: true, message: "Saved." };
+}
+
+/** Unbookmarks a tweet on X, then drops it from the gallery. Owner only. */
+export async function removeBookmarkAction(tweetId: string): Promise<ActionState> {
+  await requireAdmin();
+  if (!/^\d{1,25}$/.test(tweetId)) return { ok: false, message: "Invalid tweet id." };
+  const creds = readCredentials(await getState());
+  if (!creds) return { ok: false, message: "No X cookies saved." };
+  try {
+    await deleteBookmark(creds, tweetId);
+  } catch (err) {
+    if (err instanceof XAuthError) await updateState({ status: "expired", lastError: err.message });
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+  await removeStoredBookmark(tweetId);
+  updateTag(BOOKMARKS_TAG);
+  return { ok: true, message: "Removed from your bookmarks." };
 }

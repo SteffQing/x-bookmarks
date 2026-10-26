@@ -149,3 +149,7 @@ export async function runSync(): Promise<SyncResult> {
     return { ok: false, error: message };
   }
 }
+
+export async function removeStoredBookmark(id: string) {
+  await getDb().delete(schema.bookmarks).where(eq(schema.bookmarks.id, id));
+}

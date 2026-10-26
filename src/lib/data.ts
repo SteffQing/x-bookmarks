@@ -1,5 +1,5 @@
 import "server-only";
-import { and, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, lt, or, sql, type SQL } from "drizzle-orm";
 import { cacheLife, cacheTag } from "next/cache";
 import { getDb, hasDatabase, schema } from "@/db";
 import { getState } from "./state";
@@ -38,10 +38,12 @@ function toBookmark(row: Row): Bookmark {
   };
 }
 
-function filters(q: string, kind: KindFilter): SQL | undefined {
+function filters(q: string, kind: KindFilter, from?: Date, to?: Date): SQL | undefined {
   const b = schema.bookmarks;
   const conditions: SQL[] = [];
   if (kind !== "all") conditions.push(eq(b.kind, kind));
+  if (from) conditions.push(gte(b.postedAt, from));
+  if (to) conditions.push(lt(b.postedAt, to));
   const term = q.trim();
   if (term) {
     const pattern = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -64,11 +66,15 @@ export async function queryBookmarks(opts: {
   limit?: number;
   q?: string;
   kind?: KindFilter;
+  /** Inclusive lower bound on the tweet's post time. */
+  from?: Date;
+  /** Exclusive upper bound on the tweet's post time. */
+  to?: Date;
 }): Promise<BookmarkPage> {
-  const { offset = 0, limit = PAGE_SIZE, q = "", kind = "all" } = opts;
+  const { offset = 0, limit = PAGE_SIZE, q = "", kind = "all", from, to } = opts;
   if (!hasDatabase()) return { items: [], next: null, total: 0 };
   const db = getDb();
-  const where = filters(q, kind);
+  const where = filters(q, kind, from, to);
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()

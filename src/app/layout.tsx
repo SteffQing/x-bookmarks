@@ -15,6 +15,8 @@ const instrumentSerif = Instrument_Serif({
 export const metadata: Metadata = {
   title: { default: "Bookmarks", template: "%s · Bookmarks" },
   description: "A living gallery of things worth keeping, synced from X.",
+  // X's CDN can refuse media requests that carry another site's Referer.
+  referrer: "no-referrer",
 };
 
 export const viewport: Viewport = {

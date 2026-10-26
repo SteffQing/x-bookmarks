@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Heart, Quote } from "lucide-react";
+import { ArrowUpRight, EyeOff, Heart, Quote } from "lucide-react";
 import { AuthorLine } from "./author";
 import { CardMedia, FadeImage } from "./media";
 import { RichText } from "./rich-text";
@@ -95,7 +95,17 @@ function TextCard({ b }: { b: Bookmark }) {
   );
 }
 
-export function BookmarkCard({ b, index, onOpen }: { b: Bookmark; index: number; onOpen: (b: Bookmark) => void }) {
+export function BookmarkCard({
+  b,
+  index,
+  onOpen,
+  onHide,
+}: {
+  b: Bookmark;
+  index: number;
+  onOpen: (b: Bookmark) => void;
+  onHide?: (b: Bookmark) => void;
+}) {
   const isText = b.kind === "text" || (b.kind === "link" && !b.card);
   return (
     <article
@@ -138,6 +148,20 @@ export function BookmarkCard({ b, index, onOpen }: { b: Bookmark; index: number;
       >
         {formatDate(b.postedAt)}
       </time>
+      {onHide && (
+        <button
+          type="button"
+          aria-label="Hide this tweet"
+          title="Hide (only in this browser)"
+          onClick={(e) => {
+            e.stopPropagation();
+            onHide(b);
+          }}
+          className="absolute top-2.5 left-2.5 grid size-7 place-items-center rounded-full bg-black/45 text-white opacity-0 backdrop-blur-md transition-opacity duration-300 group-hover:opacity-100 hover:bg-black/70 focus-visible:opacity-100"
+        >
+          <EyeOff className="size-3.5" />
+        </button>
+      )}
     </article>
   );
 }

@@ -4,24 +4,28 @@
 import { ArrowUpRight, Check, Eye, Heart, Link2, MessageCircle, Repeat2 } from "lucide-react";
 import { useState } from "react";
 import { AuthorLine } from "./author";
+import { XVideo } from "./media";
 import { RichText } from "./rich-text";
 import { formatCompact, formatDate, imageUrl, tweetUrl } from "@/lib/format";
 import type { Bookmark, BookmarkMedia } from "@/lib/types";
 
+/** Full-size media, capped to the viewport height so tall videos never overflow the screen. */
 function MediaItem({ m }: { m: BookmarkMedia }) {
-  const style = { aspectRatio: `${m.width} / ${m.height}` };
+  const sizing = "h-auto max-h-[78vh] w-auto max-w-full rounded-2xl";
   if (m.type !== "photo" && m.videoUrl) {
     return (
-      <video
+      <XVideo
         src={m.videoUrl}
         poster={imageUrl(m.url, "large")}
+        width={m.width}
+        height={m.height}
         controls={m.type === "video"}
-        autoPlay={m.type === "gif"}
+        autoPlay
         loop={m.type === "gif"}
         muted={m.type === "gif"}
         playsInline
-        className="w-full rounded-2xl bg-black"
-        style={style}
+        preload="metadata"
+        className={`${sizing} bg-black`}
       />
     );
   }
@@ -29,9 +33,10 @@ function MediaItem({ m }: { m: BookmarkMedia }) {
     <img
       src={imageUrl(m.url, "large")}
       alt={m.alt ?? ""}
+      width={m.width}
+      height={m.height}
       referrerPolicy="no-referrer"
-      className="w-full rounded-2xl bg-surface-2 object-cover"
-      style={style}
+      className={`${sizing} bg-surface-2 object-contain`}
     />
   );
 }
@@ -46,7 +51,7 @@ function Stat({ icon: Icon, value, label }: { icon: typeof Heart; value?: number
   );
 }
 
-export function BookmarkDetail({ b }: { b: Bookmark }) {
+export function BookmarkDetail({ b, actions }: { b: Bookmark; actions?: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
   const hasMedia = b.media.length > 0;
   const isText = !hasMedia && !b.card;
@@ -62,7 +67,7 @@ export function BookmarkDetail({ b }: { b: Bookmark }) {
       className={`@container ${hasMedia ? "grid gap-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] md:gap-8" : "mx-auto max-w-2xl"}`}
     >
       {hasMedia && (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col items-center gap-3 md:sticky md:top-0 md:self-start">
           {b.media.map((m, i) => (
             <MediaItem key={i} m={m} />
           ))}
@@ -143,7 +148,7 @@ export function BookmarkDetail({ b }: { b: Bookmark }) {
           </time>
         </div>
 
-        <div className="mt-5 flex gap-2">
+        <div className="mt-5 flex flex-wrap gap-2">
           <a
             href={tweetUrl(b.authorHandle, b.id)}
             target="_blank"
@@ -160,6 +165,7 @@ export function BookmarkDetail({ b }: { b: Bookmark }) {
             {copied ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
             {copied ? "Copied" : "Copy link"}
           </button>
+          {actions}
         </div>
       </div>
     </div>

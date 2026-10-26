@@ -17,6 +17,9 @@ const USER_AGENT =
 /** Used when discovery fails. Can be overridden from the admin page. */
 export const FALLBACK_QUERY_ID = "QUmGNbgmiTSb_sMZTr_c2Q";
 
+/** DeleteBookmark mutation id, as seen in x.com's own request (October 2026). */
+const DELETE_BOOKMARK_QUERY_ID = "Wlmlj2-xzyS1GN3a6cj-mQ";
+
 /**
  * Feature flags exactly as x.com's own Bookmarks request sent them (October 2026).
  * When discovery finds a different list, flags not listed here are sent as false.
@@ -105,8 +108,8 @@ export function defaultQuery(queryId?: string | null): QueryInfo {
 
 const BUNDLE_BASE = "https://abs.twimg.com/responsive-web/client-web";
 
-function findOperation(js: string): QueryInfo | null {
-  const match = /queryId:"([\w-]+)",operationName:"Bookmarks"([\s\S]{0,4000}?)\}\}/.exec(js);
+function findOperation(js: string, operation = "Bookmarks"): QueryInfo | null {
+  const match = new RegExp(`queryId:"([\\w-]+)",operationName:"${operation}"([\\s\\S]{0,4000}?)\\}\\}`).exec(js);
   if (!match) return null;
   const switches = /featureSwitches:\[([^\]]*)\]/.exec(match[2])?.[1];
   const names = switches ? [...switches.matchAll(/"(\w+)"/g)].map((m) => m[1]) : null;
@@ -118,7 +121,7 @@ function findOperation(js: string): QueryInfo | null {
  * the same way the website itself learns them. The operation lives either in a script the
  * page loads up front or in the lazily loaded bookmarks chunk listed in main.js's chunk map.
  */
-export async function discoverQuery(creds: XCredentials): Promise<QueryInfo | null> {
+export async function discoverQuery(creds: XCredentials, operation = "Bookmarks"): Promise<QueryInfo | null> {
   const get = (url: string, headers: Record<string, string> = { "user-agent": USER_AGENT }) =>
     request(url, { headers }).then((r) => (r.ok ? r.text() : ""));
 
@@ -132,7 +135,7 @@ export async function discoverQuery(creds: XCredentials): Promise<QueryInfo | nu
   let mainJs = "";
   if (main) {
     mainJs = await get(main);
-    const found = findOperation(mainJs);
+    const found = findOperation(mainJs, operation);
     if (found) return found;
   }
 
@@ -140,13 +143,13 @@ export async function discoverQuery(creds: XCredentials): Promise<QueryInfo | nu
   const chunks = [...mainJs.matchAll(/"((?:[\w.~-]*~)?bundle\.Bookmarks[\w.~-]*)":"([0-9a-f]+)"/g)];
   for (const [, name, hash] of chunks) {
     for (const url of [`${BUNDLE_BASE}/${name}.${hash}a.js`, `${BUNDLE_BASE}/${name}.${hash}.js`]) {
-      const found = findOperation(await get(url));
+      const found = findOperation(await get(url), operation);
       if (found) return found;
     }
   }
 
   for (const src of scripts.filter((s) => s !== main).slice(0, 12)) {
-    const found = findOperation(await get(src));
+    const found = findOperation(await get(src), operation);
     if (found) return found;
   }
   return null;
@@ -162,21 +165,34 @@ export async function fetchBookmarksPage(
   url.searchParams.set("variables", JSON.stringify(variables));
   url.searchParams.set("features", JSON.stringify(query.features));
 
-  const res = await request(url, {
-    headers: {
-      authorization: `Bearer ${WEB_BEARER}`,
-      cookie: cookieHeader(creds),
-      "x-csrf-token": creds.ct0,
-      "x-twitter-auth-type": "OAuth2Session",
-      "x-twitter-active-user": "yes",
-      "x-twitter-client-language": "en",
-      "content-type": "application/json",
-      "user-agent": USER_AGENT,
-      referer: "https://x.com/i/bookmarks",
-    },
-    cache: "no-store",
-  });
+  const res = await request(url, { headers: apiHeaders(creds), cache: "no-store" });
+  await throwForStatus(res);
 
+  const json = await res.json();
+  if (!json?.data && json?.errors?.length) {
+    const message: string = json.errors.map((e: { message?: string }) => e.message).join("; ");
+    if (/auth|login|csrf/i.test(message)) throw new XAuthError(message);
+    throw new XQueryError(message);
+  }
+  return parseBookmarksPage(json);
+}
+
+function apiHeaders(creds: XCredentials) {
+  return {
+    authorization: `Bearer ${WEB_BEARER}`,
+    cookie: cookieHeader(creds),
+    "x-csrf-token": creds.ct0,
+    "x-twitter-auth-type": "OAuth2Session",
+    "x-twitter-active-user": "yes",
+    "x-twitter-client-language": "en",
+    "content-type": "application/json",
+    "user-agent": USER_AGENT,
+    origin: "https://x.com",
+    referer: "https://x.com/i/bookmarks",
+  };
+}
+
+async function throwForStatus(res: Response) {
   if (res.status === 401 || res.status === 403) {
     throw new XAuthError(`X rejected the cookies (HTTP ${res.status}). Paste fresh ones.`);
   }
@@ -188,12 +204,31 @@ export async function fetchBookmarksPage(
     throw new XQueryError(`X rejected the query (HTTP ${res.status}). ${body.slice(0, 300)}`);
   }
   if (!res.ok) throw new Error(`X returned HTTP ${res.status}.`);
+}
 
-  const json = await res.json();
-  if (!json?.data && json?.errors?.length) {
-    const message: string = json.errors.map((e: { message?: string }) => e.message).join("; ");
-    if (/auth|login|csrf/i.test(message)) throw new XAuthError(message);
-    throw new XQueryError(message);
+/** Removes a tweet from the account's bookmarks on X (the same call x.com makes). */
+export async function deleteBookmark(creds: XCredentials, tweetId: string) {
+  const send = async (queryId: string) => {
+    const res = await request(`https://x.com/i/api/graphql/${queryId}/DeleteBookmark`, {
+      method: "POST",
+      headers: apiHeaders(creds),
+      body: JSON.stringify({ variables: { tweet_id: tweetId }, queryId }),
+      cache: "no-store",
+    });
+    await throwForStatus(res);
+    const json = await res.json();
+    // X answers "Done", or an error when the tweet already wasn't bookmarked; both mean it's gone.
+    if (json?.errors?.length && !/not.*bookmark/i.test(JSON.stringify(json.errors))) {
+      throw new XQueryError(json.errors.map((e: { message?: string }) => e.message).join("; "));
+    }
+  };
+
+  try {
+    await send(DELETE_BOOKMARK_QUERY_ID);
+  } catch (err) {
+    if (!(err instanceof XQueryError)) throw err;
+    const discovered = await discoverQuery(creds, "DeleteBookmark").catch(() => null);
+    if (!discovered || discovered.queryId === DELETE_BOOKMARK_QUERY_ID) throw err;
+    await send(discovered.queryId);
   }
-  return parseBookmarksPage(json);
 }

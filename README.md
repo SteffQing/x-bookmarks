@@ -2,7 +2,7 @@
 
 A Pinterest-style gallery of your X (Twitter) bookmarks that you can share publicly. It doesn't use the official API: you give it your browser session cookies once, and it syncs your bookmarks into its own database every day.
 
-- **`/`**: the public gallery. A masonry grid of image, video, link and text cards, with search, type filters, a detail view and light/dark themes.
+- **`/`**: the public gallery. A masonry grid of image, video, link and text cards, with search, type and date filters, a detail view and light/dark themes. Visitors can hide tweets they don't want to see; that's stored only in their own browser. When you're logged in as the owner, the detail view also has **Remove bookmark**, which unbookmarks the tweet on X itself.
 - **`/admin`**: password-protected. Paste your X cookies, run a sync, and see the connection status.
 - **`/b/:id`**: a shareable page for a single bookmark.
 
@@ -78,4 +78,4 @@ src/
 
 - This uses X's private web API. That's against X's terms of service, and X can change it at any time. Everything specific to X lives in `src/lib/x/client.ts`.
 - The cookies give full access to your X account. Keep `ENCRYPTION_KEY` and the admin password private.
-- Media is loaded directly from X's CDN (`pbs.twimg.com` and `video.twimg.com`). If a tweet is deleted, its media may stop loading.
+- Media is loaded directly from X's CDN (`pbs.twimg.com` and `video.twimg.com`). If the browser can't play a video directly, it retries through `/api/media`, a small proxy that only allows `video.twimg.com`. If a tweet is deleted, its media may stop loading.

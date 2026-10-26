@@ -43,6 +43,24 @@ export function FadeImage({
   );
 }
 
+/**
+ * A video from X's CDN. If the browser can't load it directly (X may refuse requests coming
+ * from other sites), it retries once through this site's /api/media proxy.
+ */
+export function XVideo({ src, ...props }: React.ComponentProps<"video"> & { src: string }) {
+  const [proxied, setProxied] = useState(false);
+  return (
+    <video
+      {...props}
+      src={proxied ? `/api/media?u=${encodeURIComponent(src)}` : src}
+      onError={(e) => {
+        if (!proxied) setProxied(true);
+        props.onError?.(e);
+      }}
+    />
+  );
+}
+
 /** Poster that starts a muted, looping preview while hovered. */
 function HoverVideo({ media, ratio, className = "" }: { media: BookmarkMedia; ratio?: number; className?: string }) {
   const [active, setActive] = useState(false);
@@ -54,7 +72,7 @@ function HoverVideo({ media, ratio, className = "" }: { media: BookmarkMedia; ra
     >
       <FadeImage src={imageUrl(media.url, "medium")} alt={media.alt ?? ""} ratio={ratio} className="size-full" />
       {active && media.videoUrl && (
-        <video
+        <XVideo
           src={media.videoUrl}
           autoPlay
           muted
