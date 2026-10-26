@@ -92,6 +92,7 @@ export function Dashboard(props: {
   const [settingsState, saveSettings, savingSettings] = useActionState(saveSettingsAction, null);
   const [syncState, setSyncState] = useState<ActionState>(null);
   const [syncing, startSync] = useTransition();
+  const [pasteHeader, setPasteHeader] = useState(false);
   const status = STATUS[props.status];
   const busy = syncing || savingCookies;
 
@@ -149,22 +150,63 @@ export function Dashboard(props: {
       </section>
 
       <form action={saveCookies} className={`${panel} animate-rise`} style={{ animationDelay: "60ms" }}>
-        <h2 className="text-lg font-semibold tracking-tight">X cookies</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold tracking-tight">X cookies</h2>
+          <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-muted select-none">
+            Paste full cookie header
+            <input
+              type="checkbox"
+              role="switch"
+              checked={pasteHeader}
+              onChange={(e) => setPasteHeader(e.target.checked)}
+              className="peer sr-only"
+            />
+            <span
+              aria-hidden
+              className="relative h-5 w-9 rounded-full bg-surface-2 ring-1 ring-line transition-colors peer-checked:bg-ink peer-focus-visible:ring-2 peer-focus-visible:ring-accent after:absolute after:top-0.5 after:left-0.5 after:size-4 after:rounded-full after:bg-surface after:shadow after:transition-transform peer-checked:after:translate-x-4"
+            />
+          </label>
+        </div>
         <p className="mt-1 text-[14px] text-muted">
-          Paste your x.com <code className="font-mono text-[13px] text-ink">cookie</code> header (or just{" "}
-          <code className="font-mono text-[13px] text-ink">auth_token</code> and{" "}
-          <code className="font-mono text-[13px] text-ink">ct0</code>). They’re encrypted before being stored and never
-          leave the server.
+          Encrypted before being stored; they never leave the server.
         </p>
-        <textarea
-          name="cookies"
-          required
-          rows={4}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="auth_token=…; ct0=…"
-          className={`${input} mt-5 resize-y font-mono text-[13px] leading-relaxed`}
-        />
+        <input type="hidden" name="mode" value={pasteHeader ? "header" : "fields"} />
+        {pasteHeader ? (
+          <textarea
+            name="cookies"
+            required
+            rows={4}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="guest_id=…; auth_token=…; ct0=…; twid=…"
+            className={`${input} mt-5 resize-y font-mono text-[13px] leading-relaxed`}
+          />
+        ) : (
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className={label}>auth_token</span>
+              <input
+                name="authToken"
+                type="password"
+                required
+                spellCheck={false}
+                autoComplete="off"
+                className={`${input} mt-2 font-mono text-[13px]`}
+              />
+            </label>
+            <label className="block">
+              <span className={label}>ct0</span>
+              <input
+                name="ct0"
+                type="password"
+                required
+                spellCheck={false}
+                autoComplete="off"
+                className={`${input} mt-2 font-mono text-[13px]`}
+              />
+            </label>
+          </div>
+        )}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             <Message state={cookieState} />

@@ -6,7 +6,7 @@ import { login, logout, requireAdmin } from "@/lib/auth";
 import { BOOKMARKS_TAG } from "@/lib/data";
 import { saveCredentials, updateState } from "@/lib/state";
 import { runSync } from "@/lib/sync";
-import { parseCredentials } from "@/lib/x/cookies";
+import { parseCredentials, type XCredentials } from "@/lib/x/cookies";
 
 export type ActionState = { ok: boolean; message: string } | null;
 
@@ -31,9 +31,20 @@ function describe(result: Awaited<ReturnType<typeof runSync>>): ActionState {
 
 export async function saveCookiesAction(_: ActionState, form: FormData): Promise<ActionState> {
   await requireAdmin();
-  const creds = parseCredentials(String(form.get("cookies") ?? ""));
-  if (!creds) {
-    return { ok: false, message: "Couldn’t find both auth_token and ct0 in what you pasted." };
+  const field = (key: string) => String(form.get(key) ?? "").trim();
+  let creds: XCredentials | null;
+  if (form.get("mode") === "header") {
+    creds = parseCredentials(field("cookies"));
+    if (!creds) return { ok: false, message: "Couldn’t find both auth_token and ct0 in what you pasted." };
+  } else {
+    const valid = /^[A-Za-z0-9%_-]+$/;
+    // Forgive pasting `auth_token=…` or a quoted value into the box.
+    const value = (key: string, name: string) => field(key).replace(new RegExp(`^${name}\\s*=\\s*`), "").replace(/^["']|["';]$/g, "");
+    const [authToken, ct0] = [value("authToken", "auth_token"), value("ct0", "ct0")];
+    if (!valid.test(authToken) || !valid.test(ct0)) {
+      return { ok: false, message: "Enter both auth_token and ct0 (just the values, no quotes or names)." };
+    }
+    creds = { authToken, ct0 };
   }
   await saveCredentials(creds);
   const result = await runSync();

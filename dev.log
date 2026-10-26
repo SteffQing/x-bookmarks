@@ -1,0 +1,64 @@
+▲ Next.js 16.4.3 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://192.0.2.2:3001
+- Environments: .env.local
+✓ Ready in 771ms
+✓ Running next.config.ts took 181ms
+- Cache Components enabled
+- Partial Prefetching enabled
+
+○ Compiling /admin ...
+ GET /admin 200 in 1280ms (next.js: 671ms, application-code: 609ms)
+⨯ Error: Failed query: select "key", "count", "reset_at" from "login_attempts" where "login_attempts"."key" = $1
+params: login:127.0.0.1
+    at async login (src/lib/auth.ts:45:21)
+    at async loginAction (src/app/admin/actions.ts:14:18)
+  43 |   const now = new Date();
+  44 |
+> 45 |   const [attempt] = await db
+     |                     ^
+  46 |     .select()
+  47 |     .from(schema.loginAttempts)
+  48 |     .where(eq(schema.loginAttempts.key, key)); {
+  query: 'select "key", "count", "reset_at" from "login_attempts" where "login_attempts"."key" = $1',
+  params: [ 'login:127.0.0.1' ],
+  digest: '2356739920',
+  [cause]: Error: connect ECONNREFUSED 127.0.0.1:5432
+      at async login (src/lib/auth.ts:45:21)
+      at async loginAction (src/app/admin/actions.ts:14:18)
+    43 |   const now = new Date();
+    44 |
+  > 45 |   const [attempt] = await db
+       |                     ^
+    46 |     .select()
+    47 |     .from(schema.loginAttempts)
+    48 |     .where(eq(schema.loginAttempts.key, key)); {
+    errno: -111,
+    code: 'ECONNREFUSED',
+    syscall: 'connect',
+    address: '127.0.0.1',
+    port: 5432
+  }
+}
+ POST /admin 500 in 1818ms (next.js: 2ms, application-code: 1816ms)
+  └─ ƒ loginAction(null, {}) in 69ms src/app/admin/actions.ts
+[browser] Uncaught Error: Failed query: select "key", "count", "reset_at" from "login_attempts" where "login_attempts"."key" = $1
+params: login:127.0.0.1
+    at login (src/lib/auth.ts:45:21)
+    at loginAction (src/app/admin/actions.ts:14:18)
+    at Gate (src/app/admin/page.tsx:22:34)
+    at AdminPage (src/app/admin/page.tsx:43:9)
+  43 |   const now = new Date();
+  44 |
+> 45 |   const [attempt] = await db
+     |                     ^
+  46 |     .select()
+  47 |     .from(schema.loginAttempts)
+  48 |     .where(eq(schema.loginAttempts.key, key));
+ GET /admin 200 in 71ms (next.js: 2ms, application-code: 69ms)
+ GET /admin 200 in 80ms (next.js: 1.5ms, application-code: 79ms)
+ GET /admin 200 in 111ms (next.js: 3ms, application-code: 108ms)
+ POST /admin 200 in 316ms (next.js: 1.5ms, application-code: 315ms)
+  └─ ƒ loginAction(null, {}) in 172ms src/app/admin/actions.ts
+ POST /admin 200 in 189ms (next.js: 3ms, application-code: 186ms)
+  └─ ƒ saveCookiesAction(null, {}) in 39ms src/app/admin/actions.ts
